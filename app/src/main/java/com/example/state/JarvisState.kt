@@ -7,12 +7,12 @@ import kotlinx.coroutines.flow.asStateFlow
 enum class VoiceStatus(val label: String, val subtitle: String) {
     DISABLED("Disabled", "Tap power button to activate JARVIS"),
     SCHOOL_MODE("School Mode Active", "Voice recognition & microphone strictly disabled"),
-    WAITING_FOR_WAKE_WORD("Waiting for \"Jarvis\"", "Say \"Jarvis\" followed by your question or command"),
+    WAITING_FOR_WAKE_WORD("Waiting for Jarvis...", "Say \"Jarvis\" followed by your question or command"),
     LISTENING("Listening...", "Say your question or command now"),
     CONVERSING("In Conversation", "Back-and-forth conversation active. Speak freely."),
     LIVE_MODE("Live Phone Mode", "Continuous real-time voice call active. Speak naturally."),
     PROCESSING("Thinking...", "Processing query & generating response"),
-    SPEAKING("Responding...", "Speaking response via Text-to-Speech")
+    SPEAKING("Speaking...", "Speaking response via Text-to-Speech")
 }
 
 data class ConversationMessage(
@@ -110,6 +110,10 @@ object JarvisStateHolder {
 
     fun clearConversation() {
         _conversationHistory.value = emptyList()
+    }
+
+    fun setConversationHistory(messages: List<ConversationMessage>) {
+        _conversationHistory.value = messages.takeLast(30)
     }
 
     fun setLiveMode(active: Boolean) {

@@ -29,6 +29,7 @@ import com.example.state.VoiceStatus
 import com.example.ui.theme.JarvisAmber
 import com.example.ui.theme.JarvisCyan
 import com.example.ui.theme.JarvisCyanLight
+import com.example.ui.theme.JarvisGreen
 import com.example.ui.theme.JarvisNavyCardBorder
 import com.example.ui.theme.JarvisSchoolRed
 import kotlin.math.cos
@@ -40,12 +41,14 @@ fun ArcReactorVisualizer(
     amplitude: Float,
     isSchoolMode: Boolean,
     onClick: () -> Unit,
+    animationsEnabled: Boolean = true,
+    accentColor: Color = JarvisCyan,
     modifier: Modifier = Modifier
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "arc_reactor_animation")
 
     // Rotation animation
-    val rotation by infiniteTransition.animateFloat(
+    val animRotation by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
@@ -56,7 +59,7 @@ fun ArcReactorVisualizer(
     )
 
     // Pulse animation
-    val pulse by infiniteTransition.animateFloat(
+    val animPulse by infiniteTransition.animateFloat(
         initialValue = 0.92f,
         targetValue = 1.08f,
         animationSpec = infiniteRepeatable(
@@ -67,7 +70,7 @@ fun ArcReactorVisualizer(
     )
 
     // Secondary reverse rotation
-    val reverseRotation by infiniteTransition.animateFloat(
+    val animReverseRotation by infiniteTransition.animateFloat(
         initialValue = 360f,
         targetValue = 0f,
         animationSpec = infiniteRepeatable(
@@ -77,12 +80,16 @@ fun ArcReactorVisualizer(
         label = "reverse_rotation"
     )
 
+    val rotation = if (animationsEnabled) animRotation else 0f
+    val pulse = if (animationsEnabled) animPulse else 1f
+    val reverseRotation = if (animationsEnabled) animReverseRotation else 0f
+
     val coreColor = when {
         isSchoolMode -> JarvisSchoolRed
         status == VoiceStatus.PROCESSING -> JarvisAmber
-        status == VoiceStatus.LISTENING -> JarvisCyanLight
-        status == VoiceStatus.WAITING_FOR_WAKE_WORD -> JarvisCyan
-        status == VoiceStatus.SPEAKING -> Color(0xFF00E5FF)
+        status == VoiceStatus.LISTENING -> accentColor
+        status == VoiceStatus.WAITING_FOR_WAKE_WORD -> accentColor
+        status == VoiceStatus.SPEAKING -> JarvisGreen
         else -> JarvisNavyCardBorder
     }
 

@@ -858,6 +858,22 @@ class JarvisVoiceService : Service(), TextToSpeech.OnInitListener {
             isSpeaking = true
             JarvisStateHolder.updateStatus(VoiceStatus.SPEAKING)
 
+            textToSpeech?.let { tts ->
+                tts.setPitch(settingsRepo.ttsPitch.value)
+                tts.setSpeechRate(settingsRepo.ttsSpeed.value)
+                val voiceName = settingsRepo.ttsVoiceName.value
+                if (voiceName.isNotBlank()) {
+                    try {
+                        val targetVoice = tts.voices?.find { it.name == voiceName }
+                        if (targetVoice != null) {
+                            tts.voice = targetVoice
+                        }
+                    } catch (e: Throwable) {
+                        // Safe fallback to default voice
+                    }
+                }
+            }
+
             if (isTtsReady && textToSpeech != null) {
                 val utteranceId = "jarvis_tts_${System.currentTimeMillis()}"
                 textToSpeech?.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)

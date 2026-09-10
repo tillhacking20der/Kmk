@@ -9,7 +9,12 @@ import android.os.BatteryManager
 import android.os.Build
 import android.util.Base64
 import com.example.BuildConfig
+import com.example.data.local.JarvisDatabase
+import com.example.data.model.ChatMessageEntity
+import com.example.data.repository.SettingsRepository
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -46,8 +51,15 @@ object JarvisConversationEngine {
     @Synchronized
     fun getHistory(): List<ChatTurn> = conversationHistory.toList()
 
+    fun getEffectiveApiKey(context: Context): String {
+        val userKey = SettingsRepository.getInstance(context).userApiKey.value.trim()
+        if (userKey.isNotBlank()) return userKey
+        val buildKey = try { BuildConfig.GEMINI_API_KEY } catch (e: Throwable) { "" }
+        return if (!buildKey.isNullOrBlank() && buildKey != "MY_GEMINI_API_KEY") buildKey else ""
+    }
+
     @Synchronized
-    fun addTurn(userText: String, modelText: String) {
+    fun addTurn(context: Context? = null, userText: String, modelText: String) {
         if (userText.isNotBlank()) {
             conversationHistory.add(ChatTurn(role = "user", text = userText))
             detectAndStoreSubject(userText)
@@ -57,6 +69,33 @@ object JarvisConversationEngine {
         }
         while (conversationHistory.size > 20) {
             conversationHistory.removeAt(0)
+        }
+
+        if (context != null) {
+            val saveHistory = SettingsRepository.getInstance(context).saveChatHistory.value
+            if (saveHistory) {
+                val db = JarvisDatabase.getDatabase(context)
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        if (userText.isNotBlank()) {
+                            db.chatMessageDao().insertMessage(ChatMessageEntity(role = "user", text = userText))
+                        }
+                        if (modelText.isNotBlank()) {
+                            db.chatMessageDao().insertMessage(ChatMessageEntity(role = "model", text = modelText))
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    fun loadHistoryFromDatabase(messages: List<ChatMessageEntity>) {
+        conversationHistory.clear()
+        messages.forEach {
+            conversationHistory.add(ChatTurn(role = it.role, text = it.text, timestamp = it.timestamp))
         }
     }
 
@@ -141,19 +180,19 @@ object JarvisConversationEngine {
         // 1. Check for basic device queries (Time, Date, Battery)
         if (isTimeQuery(lower)) {
             val reply = getCurrentTimeFormatted()
-            addTurn(rawQuery, reply)
+            addTurn(context, rawQuery, reply)
             return reply
         }
 
         if (isDateQuery(lower)) {
             val reply = getCurrentDateFormatted()
-            addTurn(rawQuery, reply)
+            addTurn(context, rawQuery, reply)
             return reply
         }
 
         if (isBatteryQuery(lower)) {
             val reply = getBatteryStatusFormatted(context)
-            addTurn(rawQuery, reply)
+            addTurn(context, rawQuery, reply)
             return reply
         }
 
@@ -171,43 +210,42 @@ object JarvisConversationEngine {
                     "We just initiated our conversation."
                 }
             }
-            addTurn(rawQuery, reply)
+            addTurn(context, rawQuery, reply)
             return reply
         }
 
         // 3. Screen Context Queries ("What am I looking at?", "What does this button do?", "Read this text to me")
         if (isScreenContextQuery(lower)) {
             val screenReply = handleScreenContextQuery(context, rawQuery, lower)
-            addTurn(rawQuery, screenReply)
+            addTurn(context, rawQuery, screenReply)
             return screenReply
         }
 
         // 4. Local conversational intelligence & pronoun context resolution
         val localResponse = resolveLocalConversationalKnowledge(lower)
         if (localResponse != null) {
-            addTurn(rawQuery, localResponse)
+            addTurn(context, rawQuery, localResponse)
             return localResponse
         }
 
-        // 4. If Gemini API key is configured, query Gemini 3.5 Flash via REST API
-        val apiKey = try {
-            BuildConfig.GEMINI_API_KEY
-        } catch (e: Throwable) {
-            ""
-        }
-
-        if (!apiKey.isNullOrBlank() && apiKey != "MY_GEMINI_API_KEY") {
+        // 5. Query Gemini Flash AI via REST API if key is available
+        val apiKey = getEffectiveApiKey(context)
+        if (apiKey.isNotBlank()) {
             val geminiResponse = callGeminiApi(apiKey, rawQuery)
             if (!geminiResponse.isNullOrBlank()) {
-                addTurn(rawQuery, geminiResponse)
+                addTurn(context, rawQuery, geminiResponse)
                 return geminiResponse
+            } else {
+                val netErrMsg = "I am currently unable to reach the Gemini cloud service. Please verify your internet connection or API key."
+                addTurn(context, rawQuery, netErrMsg)
+                return netErrMsg
             }
         }
 
-        // 5. Fallback local conversational responder for unknown questions
-        val fallback = generateSmartFallback(rawQuery)
-        addTurn(rawQuery, fallback)
-        return fallback
+        // 6. If no AI API key is provided
+        val noKeyResponse = "An AI API key is not configured. Please open Settings in the JARVIS app to enter your Gemini API key."
+        addTurn(context, rawQuery, noKeyResponse)
+        return noKeyResponse
     }
 
     private fun isTimeQuery(lower: String): Boolean {
@@ -393,7 +431,7 @@ object JarvisConversationEngine {
 
     private suspend fun callGeminiApi(apiKey: String, prompt: String): String? = withContext(Dispatchers.IO) {
         try {
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
 
             val rootJson = JSONObject()
 
@@ -510,13 +548,8 @@ object JarvisConversationEngine {
             ?: return "I was unable to capture your screen frame at this moment. Please try again."
 
         // 4. If Gemini API key is available, analyze with multimodal vision
-        val apiKey = try {
-            BuildConfig.GEMINI_API_KEY
-        } catch (e: Throwable) {
-            ""
-        }
-
-        if (!apiKey.isNullOrBlank() && apiKey != "MY_GEMINI_API_KEY") {
+        val apiKey = getEffectiveApiKey(context)
+        if (apiKey.isNotBlank()) {
             val visionResponse = callGeminiVisionApi(apiKey, rawQuery, frame)
             frame.recycle()
             if (!visionResponse.isNullOrBlank()) {
@@ -524,6 +557,7 @@ object JarvisConversationEngine {
             }
         } else {
             frame.recycle()
+            return "Screen Context requires an AI API key. Please open Settings in the JARVIS app to configure your Gemini API key."
         }
 
         // 5. Fallback local screen response when offline or key not provided
@@ -549,7 +583,7 @@ object JarvisConversationEngine {
         bitmap: Bitmap
     ): String? = withContext(Dispatchers.IO) {
         try {
-            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
 
             // Convert bitmap to JPEG Base64
             val baos = ByteArrayOutputStream()
